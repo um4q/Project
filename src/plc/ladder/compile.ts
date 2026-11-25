@@ -629,6 +629,8 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
   });
 
   const rungIn = new Uint8Array(rungs.length);
+  /** Scan id (rt.scanId) of the last scan that executed each rung */
+  const scanned = new Uint32Array(rungs.length);
   const n = execs.length;
   let lastPrescan = -1;
 
@@ -636,7 +638,7 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
     name: def.name,
     type: 'RLL',
     sbrParams,
-    ladder: { rungs, power, rungIn },
+    ladder: { rungs, power, rungIn, scanned },
     run() {
       const loc = rt.loc;
       const prevRoutine = loc.routine;
@@ -644,6 +646,9 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
       const prevElement = loc.element;
       const prevMcrOpen = rt.mcrOpen;
       const prevMcrFalse = rt.mcrFalse;
+      // JMP labels are local to a routine: a jump pending in the caller's rung never leaks into this routine
+      const prevJump = rt.jumpLabel;
+      rt.jumpLabel = null;
       rt.mcrOpen = false;
       rt.mcrFalse = false;
       loc.routine = def.name;
@@ -659,6 +664,12 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
         const rin = !rt.mcrFalse;
         rungIn[r] = rin ? 1 : 0;
         execs[r](rin);
+        scanned[r] = rt.scanId;
+        // RET ends the routine at the end of its rung, even if a JMP on the same rung was true
+        if (frame && frame.returned) {
+          rt.jumpLabel = null;
+          break;
+        }
         if (rt.jumpLabel !== null) {
           const target = labels.get(rt.jumpLabel);
           rt.jumpLabel = null;
@@ -666,9 +677,9 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
           r = target as number;
           continue;
         }
-        if (frame && frame.returned) break;
         r++;
       }
+      rt.jumpLabel = prevJump;
       rt.mcrOpen = prevMcrOpen;
       rt.mcrFalse = prevMcrFalse;
       loc.routine = prevRoutine;
@@ -684,6 +695,7 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
       for (const p of prescans) p();
       for (const pf of power) pf.fill(0);
       rungIn.fill(0);
+      scanned.fill(0);
       rt.loc.routine = prevRoutine;
     },
   };

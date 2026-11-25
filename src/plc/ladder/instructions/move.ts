@@ -14,7 +14,7 @@
  */
 import type { InstructionDef, InstrCompiler, Executable, Span } from './registry';
 import type { AtomicRef, Ref } from '../../core/refs';
-import type { AtomicTypeName } from '../../core/datatypes';
+import type { AtomicTypeName, StructType, TypeRegistry } from '../../core/datatypes';
 import { FAULT } from '../../core/faults';
 import { atomicSize, convert, copyInto, type StructValue, type Value } from '../../core/values';
 
@@ -150,6 +150,18 @@ function byteReader(t: AtomicTypeName): ByteReader {
 
 type BinOp = (a: number, b: number) => number;
 
+/**
+ * Logical instructions zero-fill smaller integer operands (Logix: "Logical
+ * instructions use zero fill. All other instructions use sign-extension.").
+ * When all operands share one type the stored low bits are the same either way.
+ */
+function zeroFilled(r: AtomicRef): () => number {
+  const g = r.get;
+  if (r.atype === 'SINT') return () => g() & 0xff;
+  if (r.atype === 'INT') return () => g() & 0xffff;
+  return g;
+}
+
 /** AND / OR / XOR: Source A, Source B, Dest (integers). */
 function bitwise2(mnemonic: string, title: string, op: BinOp): InstructionDef {
   return {
@@ -164,8 +176,8 @@ function bitwise2(mnemonic: string, title: string, op: BinOp): InstructionDef {
       { name: 'Dest', kind: 'dest' },
     ],
     compile(c) {
-      const a = c.source(0, { integer: true }).get;
-      const b = c.source(1, { integer: true }).get;
+      const a = zeroFilled(c.source(0, { integer: true }));
+      const b = zeroFilled(c.source(1, { integer: true }));
       const dst = c.dest(2, { integer: true });
       const set = dst.set;
       const wrap = narrower(dst.atype);
@@ -194,6 +206,8 @@ function compileCop(c: InstrCompiler): Executable {
   const st = sspan.info.type;
   const dt = dspan.info.type;
   const same = sameElementType(sspan, dspan);
+  rejectBool(c, 0, sspan);
+  rejectBool(c, 1, dspan);
   if (!c.failed && !same && (st.kind === 'struct' || dt.kind === 'struct')) {
     c.error(
       -1,
@@ -275,8 +289,51 @@ function compileCop(c: InstrCompiler): Executable {
 
 // ----------------------------------------------------------------------------- FLL
 
+/** BOOL arrays are bit-packed in Logix memory: COP and FLL do not accept BOOL operands. */
+function rejectBool(c: InstrCompiler, i: number, span: Span): void {
+  const t = span.info.type;
+  if (!c.failed && t.kind === 'atomic' && t.name === 'BOOL') c.error(i, `Invalid data type: '${c.operands[i]}' is BOOL; SINT, INT, DINT, REAL or a structure is required`);
+}
+
+/** Build a filler that sets every atomic member of a structure (recursively) to a converted value. */
+function structFiller(type: StructType, reg: TypeRegistry | undefined): (obj: StructValue, v: number) => void {
+  const steps: ((obj: StructValue, v: number) => void)[] = [];
+  for (const m of type.members) {
+    const mt = reg?.get(m.dataType);
+    const name = m.name;
+    const isArr = !!(m.dims && m.dims.length);
+    if (!mt || mt.kind === 'atomic') {
+      const conv = converter(mt && mt.kind === 'atomic' ? mt.name : 'DINT');
+      steps.push(
+        isArr
+          ? (o, v) => {
+              const a = o[name] as Value[];
+              const x = conv(v);
+              for (let i = 0; i < a.length; i++) a[i] = x;
+            }
+          : (o, v) => {
+              o[name] = conv(v);
+            },
+      );
+    } else {
+      const inner = structFiller(mt, reg);
+      steps.push(
+        isArr
+          ? (o, v) => {
+              for (const e of o[name] as Value[]) inner(e as StructValue, v);
+            }
+          : (o, v) => inner(o[name] as StructValue, v),
+      );
+    }
+  }
+  return (obj, v) => {
+    for (const s of steps) s(obj, v);
+  };
+}
+
 function compileFll(c: InstrCompiler): Executable {
   const dspan = c.span(1, { write: true });
+  rejectBool(c, 1, dspan);
   const length = lengthOperand(c, 2);
   const rt = c.rt;
   const dt = dspan.info.type;
@@ -288,6 +345,26 @@ function compileFll(c: InstrCompiler): Executable {
   if (dt.kind === 'struct') {
     const sref = c.ref(0);
     let sget: () => StructValue = () => ({});
+    if (sref && sref.kind === 'atomic' && sref.atype !== 'BOOL') {
+      // 'FLL 0 Udt[0] n' clears structures: every atomic member gets the (converted) source value
+      const fill = structFiller(dt, dspan.ref.tag?.scope.types);
+      const get = sref.get;
+      return {
+        exec(rin) {
+          if (!rin) return rin;
+          const len = length();
+          checkLength(len);
+          if (len === 0) return rin;
+          const v = get();
+          const da = D.arr();
+          const ds = D.start();
+          let n = D.total - ds;
+          if (len < n) n = len;
+          for (let i = 0; i < n; i++) fill(da[ds + i] as StructValue, v);
+          return rin;
+        },
+      };
+    }
     if (sref) {
       if (sref.kind !== 'struct' || sref.stype !== dt) {
         const what = sref.kind === 'array' ? `an array of ${sref.info.type.name}` : sref.kind === 'struct' ? sref.stype.name : sref.atype;
@@ -377,8 +454,8 @@ export const moveInstructions: InstructionDef[] = [
       { name: 'Dest', kind: 'dest' },
     ],
     compile(c) {
-      const src = c.source(0, { integer: true }).get;
-      const mask = c.source(1, { integer: true }).get;
+      const src = zeroFilled(c.source(0, { integer: true }));
+      const mask = zeroFilled(c.source(1, { integer: true }));
       const dst = c.dest(2, { integer: true });
       const set = dst.set;
       const dget = dst.get;
@@ -432,7 +509,7 @@ export const moveInstructions: InstructionDef[] = [
       { name: 'Dest', kind: 'dest' },
     ],
     compile(c) {
-      const src = c.source(0, { integer: true }).get;
+      const src = zeroFilled(c.source(0, { integer: true }));
       const dst = c.dest(1, { integer: true });
       const set = dst.set;
       const wrap = narrower(dst.atype);

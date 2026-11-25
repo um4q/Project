@@ -99,14 +99,8 @@ function compileTimer(c: InstrCompiler, step: TimerStep, prescan: (o: TimerObj) 
       return rin;
     },
     prescan() {
-      // An indirect element is resolved with the current subscript value.
-      let o: TimerObj;
-      try {
-        o = get();
-      } catch {
-        return;
-      }
-      prescan(o);
+      // An indirect element is resolved with the current subscript value; out of range faults 4/20 like any prescan.
+      prescan(get());
     },
   };
 }

@@ -59,6 +59,8 @@ export class Runtime {
   readonly minorFaults: FaultRecord[] = [];
   /** Max JSR nesting */
   maxCallDepth = 32;
+  /** Incremented at the start of every task scan (1, 2, ...); 0 = never scanned */
+  scanId = 0;
 
   majorFault(spec: FaultSpec, detail?: string): never {
     throw new PlcMajorFault(spec, detail);

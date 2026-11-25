@@ -3,7 +3,7 @@
  */
 import type { InstructionDef } from './registry';
 import { FAULT } from '../../core/faults';
-import { readParam, writeParam } from '../params';
+import { readParam, writeParam, type ParamValue } from '../params';
 import type { Ref } from '../../core/refs';
 
 export const programInstructions: InstructionDef[] = [
@@ -40,13 +40,14 @@ export const programInstructions: InstructionDef[] = [
           if (!rin) return false;
           const args = inputs.map(readParam);
           if (rt.frames.length >= rt.maxCallDepth) rt.majorFault(FAULT.NESTING, `${rt.maxCallDepth} levels`);
-          const frame = { args, returns: null as unknown[] | null, returned: false };
+          const frame = { args: args as unknown[], returns: null as unknown[] | null, returned: false };
           rt.frames.push(frame);
           routine.get().run();
           rt.frames.pop();
           if (frame.returns && returns.length) {
-            if (frame.returns.length !== returns.length) rt.majorFault(FAULT.JSR_PARAMS, `RET returned ${frame.returns.length}, JSR expects ${returns.length}`);
-            for (let k = 0; k < returns.length; k++) if (!writeParam(returns[k], frame.returns[k])) rt.majorFault(FAULT.JSR_PARAMS, `return parameter ${k} type mismatch`);
+            // a RET with fewer return values than the JSR expects is a fault; extra values are ignored
+            if (frame.returns.length < returns.length) rt.majorFault(FAULT.JSR_PARAMS, `RET returned ${frame.returns.length}, JSR expects ${returns.length}`);
+            for (let k = 0; k < returns.length; k++) if (!writeParam(returns[k], frame.returns[k] as ParamValue)) rt.majorFault(FAULT.JSR_PARAMS, `return parameter ${k} type mismatch`);
           }
           return true;
         },
@@ -80,7 +81,7 @@ export const programInstructions: InstructionDef[] = [
             if (frame && frame.args) rt.majorFault(FAULT.JSR_PARAMS, `JSR passes ${args.length}, SBR expects ${params.length}`);
             return rin;
           }
-          for (let k = 0; k < params.length; k++) if (!writeParam(params[k], args[k])) rt.majorFault(FAULT.JSR_PARAMS, `input parameter ${k} type mismatch`);
+          for (let k = 0; k < params.length; k++) if (!writeParam(params[k], args[k] as ParamValue)) rt.majorFault(FAULT.JSR_PARAMS, `input parameter ${k} type mismatch`);
           return rin;
         },
       };

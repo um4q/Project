@@ -9,6 +9,28 @@ import { Runtime } from './runtime';
 
 export type TagUsage = 'Local' | 'Input' | 'Output' | 'InOut' | 'Public';
 
+/** Largest tag LogixSim will create, counted in atomic values (keeps verify from exhausting memory). */
+export const MAX_TAG_ATOMS = 1_000_000;
+
+function elementCountOf(dims: number[] | null): number {
+  return dims ? dims.reduce((a, x) => a * x, 1) : 1;
+}
+
+const leafCache = new WeakMap<DataType, number>();
+/** Number of atomic values in one instance of a type (structures counted recursively). */
+export function atomicLeafCount(reg: TypeRegistry, type: DataType): number {
+  if (type.kind === 'atomic') return 1;
+  const hit = leafCache.get(type);
+  if (hit !== undefined) return hit;
+  let n = 0;
+  for (const m of type.members) {
+    const mt = reg.get(m.dataType);
+    n += (m.dims && m.dims.length ? elementCountOf(m.dims) : 1) * (mt ? atomicLeafCount(reg, mt) : 1);
+  }
+  leafCache.set(type, n);
+  return n;
+}
+
 /** A tag as stored in a project file. */
 export interface TagDef {
   name: string;
@@ -160,6 +182,11 @@ export class TagDatabase {
         return null;
       }
       dims = [...def.dims];
+    }
+    const atoms = elementCountOf(dims) * atomicLeafCount(this.types, type);
+    if (atoms > MAX_TAG_ATOMS) {
+      report(`Tag is too large (${atoms} values; the limit is ${MAX_TAG_ATOMS})`);
+      return null;
     }
     const value = createValue(this.types, type, dims);
     const tag = new Tag(def.name, scope, def, type, dims, value, module);

@@ -63,10 +63,17 @@ const notFinite = (f: number) => f - f !== 0;
 
 // ----------------------------------------------------------------------------- integer operations
 
+/**
+ * Carry out of bit 31 for integer ADD/SUB (S:C). -1 = the operation does not
+ * affect S:C (only integer ADD and SUB do, as in Logix).
+ */
+let intCarry = -1;
+
 const intAdd: BinFn = (a, b) => {
   const r = a + b;
   const w = r | 0;
   if (w !== r) intOverflow = true;
+  intCarry = (a >>> 0) + (b >>> 0) > 0xffffffff ? 1 : 0;
   return w;
 };
 
@@ -74,6 +81,8 @@ const intSub: BinFn = (a, b) => {
   const r = a - b;
   const w = r | 0;
   if (w !== r) intOverflow = true;
+  // borrow out of bit 31
+  intCarry = a >>> 0 < b >>> 0 ? 1 : 0;
   return w;
 };
 
@@ -115,7 +124,8 @@ const intAbs: UnFn = (a) => {
 };
 
 /** Square root of an integer: the (fractional) result is rounded by the store. */
-const intSqr: UnFn = (a) => Math.sqrt(Math.abs(a));
+/** Integer source and integer dest: the root is truncated (REAL operands round on store). */
+const intSqr: UnFn = (a) => Math.trunc(Math.sqrt(Math.abs(a)));
 
 // ----------------------------------------------------------------------------- REAL operations (operands already REAL)
 
@@ -163,9 +173,11 @@ function binaryExec(c: InstrCompiler, intOp: BinFn, realOp: BinFn): Executable {
     exec(rin) {
       if (rin) {
         intOverflow = false;
+        intCarry = -1;
         const r = intOp(ga(), gb(), rt);
         const ov = set(r) || intOverflow;
         rt.setArith(get(), ov);
+        if (intCarry >= 0) rt.status.C = intCarry;
       }
       return rin;
     },

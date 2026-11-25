@@ -352,11 +352,22 @@ describe('JSR / SBR / RET verify and runtime errors', () => {
     expect(errorText({ rungs: ['JSR(Sub,0,5);'], routines: [rll('Sub', 'RET(1);')] })).toMatch(/Immediate value not allowed/);
   });
 
-  it('a RET that returns a different number of values than the JSR expects faults at run time (Type 4 Code 31)', () => {
+  it('a RET with more values than the JSR return parameters ignores the extras', () => {
     const c = run({
       tags: [dint('R1'), dint('A', 1), dint('B', 2)],
       rungs: ['JSR(Sub,0,R1);'],
       routines: [rll('Sub', 'RET(A,B);')],
+    });
+    scans(c);
+    expect(c.mode).toBe('RUN');
+    expect(c.readNumber('R1')).toBe(1);
+  });
+
+  it('a RET with fewer values than the JSR return parameters faults at run time (Type 4 Code 31)', () => {
+    const c = run({
+      tags: [dint('R1'), dint('R2'), dint('A', 1)],
+      rungs: ['JSR(Sub,0,R1,R2);'],
+      routines: [rll('Sub', 'RET(A);')],
     });
     scans(c);
     expect(c.mode).toBe('FAULTED');

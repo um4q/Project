@@ -85,13 +85,8 @@ function compileCounter(c: InstrCompiler, step: CounterStep, prescan: (o: Counte
       return rin;
     },
     prescan() {
-      let o: CounterObj;
-      try {
-        o = get();
-      } catch {
-        return;
-      }
-      prescan(o);
+      // An indirect element is resolved with the current subscript value; out of range faults 4/20 like any prescan.
+      prescan(get());
     },
   };
 }

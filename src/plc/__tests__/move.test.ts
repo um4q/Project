@@ -423,15 +423,16 @@ describe('AND / OR / XOR / NOT', () => {
     expect(minorCount(c)).toBe(0);
   });
 
-  it('sign-extends SINT and INT sources to 32 bits', () => {
+  it('zero-fills SINT and INT sources when integer types are mixed (logical instructions)', () => {
     const c = run({
-      tags: [sint('S', -1), int('I', -2), dint('M', 0xff00), dint('D1'), dint('D2'), dint('D3')],
-      rungs: ['AND S M D1 ;', 'OR I 0 D2 ;', 'XOR S 16#FFFF_0000 D3 ;'],
+      tags: [sint('S', -1), int('I', -2), dint('M', 0xff00), dint('D1'), dint('D2'), dint('D3'), sint('S2')],
+      rungs: ['AND S M D1 ;', 'OR I 0 D2 ;', 'XOR S 16#FFFF_0000 D3 ;', 'AND S S S2 ;'],
     });
     scans(c);
-    expect(c.readNumber('D1')).toBe(0xff00);
-    expect(c.readNumber('D2')).toBe(-2);
-    expect(c.readNumber('D3')).toBe(0x0000ffff);
+    expect(c.readNumber('D1')).toBe(0); // 16#00FF AND 16#FF00
+    expect(c.readNumber('D2')).toBe(0xfffe);
+    expect(c.readNumber('D3')).toBe(0xffff00ff | 0);
+    expect(c.readNumber('S2')).toBe(-1); // same type throughout: unchanged low bits
   });
 
   it('S:Z is set from a zero result', () => {
@@ -883,7 +884,7 @@ describe('FLL', () => {
     expect(v('FLL T A 1 ;')).toMatch(/FLL, Operand 0: Invalid data type: 'T' is TIMER/);
     expect(v('FLL C Timers 2 ;')).toMatch(/FLL, Operand 0: Invalid data type: Source 'C' is COUNTER/);
     expect(v('FLL U Recs 2 ;')).toMatch(/FLL, Operand 0: Invalid data type: Source 'U' is Other/);
-    expect(v('FLL 0 Timers 2 ;')).toMatch(/FLL, Operand 0: Invalid data type: Source '0' is DINT/);
+    expect(v('FLL 0 Timers 2 ;')).toBe(''); // 'FLL 0 Udt[0] n' clears structures
     expect(v('FLL Timers T 1 ;')).toMatch(/FLL, Operand 0: Invalid data type: Source 'Timers' is an array of TIMER/);
     expect(v('FLL 1 A R ;')).toMatch(/FLL, Operand 2: Invalid data type: 'R' is REAL/);
     expect(v('FLL 1 K 1 ;')).toMatch(/FLL, Operand 1: 'K' is read-only/);

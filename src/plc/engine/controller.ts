@@ -44,7 +44,8 @@ export class Controller {
   /** Major fault history (most recent last) */
   readonly faultLog: FaultRecord[] = [];
   private compiled: CompiledProject | null = null;
-  private nextDue = new Map<CompiledTask, number>();
+  /** Per task schedule: due time = base + k * periodUs / 1000 (no floating-point drift) */
+  private schedule = new Map<CompiledTask, { base: number; k: number; periodUs: number }>();
   private refCache = new Map<string, Ref>();
   private listeners = new Set<() => void>();
 
@@ -166,8 +167,8 @@ export class Controller {
     this.stats.lastScanUs = 0;
     this.stats.maxScanUs = 0;
     this.stats.scans = 0;
-    this.nextDue.clear();
-    for (const t of cp.tasks) this.nextDue.set(t, this.time);
+    this.schedule.clear();
+    for (const t of cp.tasks) this.schedule.set(t, { base: this.time, k: 0, periodUs: Math.round(t.periodMs * 1000) });
     this.mode = 'RUN';
     this.emit();
   }
@@ -190,6 +191,7 @@ export class Controller {
    * (inputs read, outputs de-energized).
    */
   advance(ms: number): void {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) throw new RangeError(`advance(ms) needs a finite number >= 0, got ${ms}`);
     const end = this.time + ms;
     const cp = this.compiled;
     if (!cp || this.mode !== 'RUN') {
@@ -207,7 +209,8 @@ export class Controller {
       let bestT = Infinity;
       for (const t of cp.tasks) {
         if (t.def.inhibited) continue;
-        const due = this.nextDue.get(t)!;
+        const s = this.schedule.get(t)!;
+        const due = s.base + (s.k * s.periodUs) / 1000;
         if (due < bestT || (due === bestT && best && t.priority < best.priority)) {
           best = t;
           bestT = due;
@@ -215,7 +218,7 @@ export class Controller {
       }
       if (!best || bestT >= end) break;
       this.time = bestT;
-      this.nextDue.set(best, bestT + best.periodMs);
+      this.schedule.get(best)!.k++;
       this.runTask(best);
       if (this.mode !== 'RUN') break;
     }
@@ -238,6 +241,7 @@ export class Controller {
     rt.frames.length = 0;
     rt.jumpLabel = null;
     rt.loc.task = task.name;
+    rt.scanId = (rt.scanId + 1) >>> 0 || 1;
     const t0 = now();
     let current: CompiledProgram | undefined;
     try {
@@ -283,6 +287,7 @@ export class Controller {
       const rung = routine?.ladder?.rungs[loc.rung];
       if (rung) rec.instruction = elementMnemonic(rung.elements, loc.element);
     }
+    if (e instanceof PlcMajorFault) this.runFaultHandlers(program, rec);
     this.majorFault = rec;
     this.faultLog.push(rec);
     if (this.faultLog.length > 16) this.faultLog.shift();
@@ -290,6 +295,45 @@ export class Controller {
     rt.status.FS = 0;
     this.io.writeOutputs(false);
     this.emit();
+  }
+
+  /**
+   * Run the faulting program's fault routine (instruction faults, Type 4) and
+   * then the Controller Fault Handler program, once each. LogixSim has no
+   * GSV/SSV yet, so they cannot clear the fault: they only let logic record it.
+   * A fault inside a handler is ignored.
+   */
+  private runFaultHandlers(program: CompiledProgram | undefined, rec: FaultRecord): void {
+    const cp = this.compiled!;
+    const rt = cp.rt;
+    const saved = { ...rt.loc };
+    const runSafely = (programName: string, fn: () => void) => {
+      rt.frames.length = 0;
+      rt.jumpLabel = null;
+      rt.budget = 500 * 1000;
+      rt.loc.program = programName;
+      rt.frames.push({ args: null, returns: null, returned: false });
+      try {
+        fn();
+      } catch {
+        // ignored: the original fault is reported
+      }
+      rt.frames.length = 0;
+      rt.jumpLabel = null;
+    };
+    const fr = program?.def.faultRoutine;
+    if (program && fr && rec.type === 4) {
+      const r = program.routines.get(fr.toLowerCase());
+      if (r) runSafely(program.name, () => r.run());
+    }
+    const fh = cp.def.faultHandler;
+    if (fh) {
+      const p = cp.programs.get(fh.toLowerCase());
+      const main = p?.main;
+      if (p && main) runSafely(p.name, () => main.run());
+    }
+    for (const k of Object.keys(rt.loc) as (keyof typeof rt.loc)[]) delete rt.loc[k];
+    Object.assign(rt.loc, saved);
   }
 
   // ------------------------------------------------------------------ tag access (watch window, scene, tests)

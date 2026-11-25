@@ -350,7 +350,7 @@ describe('download and verify', () => {
     expect(msgs).toMatch(/Duplicate tag 'A'/);
     expect(msgs).toMatch(/Undefined data type 'NOPE'/);
     expect(msgs).toMatch(/Only one continuous task/);
-    expect(msgs).toMatch(/period > 0/);
+    expect(msgs).toMatch(/period 0 ms is invalid/);
     expect(msgs).toMatch(/unknown program 'Ghost'/);
   });
 });

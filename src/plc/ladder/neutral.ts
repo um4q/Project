@@ -140,7 +140,10 @@ function minVariadic(mnemonic: string): number {
   return mnemonic === 'JSR' ? 2 : 0;
 }
 
-function parseSeries(sc: Scanner, inBranch: boolean): LadderElement[] {
+/** Maximum branch nesting depth accepted in rung text. */
+export const MAX_BRANCH_DEPTH = 32;
+
+function parseSeries(sc: Scanner, inBranch: boolean, depth = 0): LadderElement[] {
   const series: LadderElement[] = [];
   for (;;) {
     sc.skipWs();
@@ -159,10 +162,11 @@ function parseSeries(sc: Scanner, inBranch: boolean): LadderElement[] {
     }
     if (c === '[') {
       const open = sc.pos;
+      if (depth >= MAX_BRANCH_DEPTH) sc.fail(`Branches are nested more than ${MAX_BRANCH_DEPTH} levels deep`);
       sc.pos++;
       const legs: LadderElement[][] = [];
       for (;;) {
-        legs.push(parseSeries(sc, true));
+        legs.push(parseSeries(sc, true, depth + 1));
         sc.skipWs();
         const d = sc.peek();
         if (d === ',') {

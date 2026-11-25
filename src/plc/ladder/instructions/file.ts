@@ -371,17 +371,20 @@ function loader(c: InstrCompiler, i: number, span: Span, spanOk: boolean, ops: Q
   };
 }
 
-/** Dest operand of FFU/LFU: returns a function copying arr[k] into the destination. */
+/**
+ * Dest operand of FFU/LFU: returns a function copying arr[k] into the destination.
+ * Called with k < 0 when the queue is empty: Logix returns 0 to the destination.
+ */
 function unloader(c: InstrCompiler, i: number, span: Span, spanOk: boolean, ops: QueueOps): (arr: Value[], k: number) => void {
   const r = c.ref(i, { write: true });
   if (!r || !spanOk || !checkElement(c, i, r, span, 'Dest')) return () => {};
   if (ops.isStruct) {
     const get = (r as StructRef).get;
-    return (arr, k) => copyInto(get(), arr[k] as StructValue);
+    return (arr, k) => (k < 0 ? zeroStruct(get()) : copyInto(get(), arr[k] as StructValue));
   }
   const set = (r as AtomicRef).set;
   return (arr, k) => {
-    set(arr[k] as number);
+    set(k < 0 ? 0 : (arr[k] as number));
   };
 }
 
@@ -392,6 +395,8 @@ function clearer(ops: QueueOps): (arr: Value[], k: number) => void {
     arr[k] = 0;
   };
 }
+
+const EMPTY: Value[] = [];
 
 function refreshStatus(o: ControlObj): void {
   o.DN = o.POS >= o.LEN ? 1 : 0;
@@ -473,7 +478,7 @@ function compileFifoUnload(c: InstrCompiler): Executable {
           clear(arr, b + len - 1);
           cells.close();
           o.POS = pos - 1;
-        }
+        } else unload(EMPTY, -1); // empty: Dest = 0
       }
       refreshStatus(o);
     },
@@ -512,7 +517,7 @@ function compileLifoUnload(c: InstrCompiler): Executable {
           clear(cells.arr, k);
           cells.close();
           o.POS = pos - 1;
-        }
+        } else unload(EMPTY, -1); // empty: Dest = 0
       }
       refreshStatus(o);
     },

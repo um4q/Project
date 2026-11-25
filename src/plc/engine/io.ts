@@ -252,14 +252,21 @@ export class IOSystem {
     return this.field.get(slot);
   }
 
-  setInput(slot: number, point: number, on: boolean): void {
+  /** Field slot if `point` is a valid point number of its module. */
+  private point(slot: number, point: number): FieldSlot | undefined {
     const f = this.field.get(slot);
+    if (!f || !Number.isInteger(point) || point < 0 || point >= (catalogEntry(f.catalog)?.size ?? 0)) return undefined;
+    return f;
+  }
+
+  setInput(slot: number, point: number, on: boolean): void {
+    const f = this.point(slot, point);
     if (!f) return;
     f.inputs = on ? f.inputs | (1 << point) : f.inputs & ~(1 << point);
   }
 
   getInput(slot: number, point: number): boolean {
-    const f = this.field.get(slot);
+    const f = this.point(slot, point);
     return !!f && ((f.inputs >>> point) & 1) === 1;
   }
 
@@ -269,7 +276,7 @@ export class IOSystem {
   }
 
   getOutput(slot: number, point: number): boolean {
-    const f = this.field.get(slot);
+    const f = this.point(slot, point);
     return !!f && ((f.outputs >>> point) & 1) === 1;
   }
 

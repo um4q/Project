@@ -448,7 +448,7 @@ describe('FFL / FFU - FIFO', () => {
     expect(c.readNumber('Ctl.POS')).toBe(0);
   });
 
-  it('.DN when full (further loads are ignored) and .EM when empty (unload leaves Dest unchanged)', () => {
+  it('.DN when full (further loads are ignored) and .EM when empty (unload of an empty FIFO returns 0)', () => {
     const c = start(fifo());
     scans(c);
     expect(c.readBool('Ctl.EM')).toBe(true);
@@ -469,7 +469,7 @@ describe('FFL / FFU - FIFO', () => {
     expect(c.readBool('Ctl.DN')).toBe(false);
     c.write('Dst', 99);
     pulse(c, 'Unload');
-    expect(c.readNumber('Dst')).toBe(99);
+    expect(c.readNumber('Dst')).toBe(0);
     expect(c.readNumber('Ctl.POS')).toBe(0);
   });
 
@@ -761,7 +761,7 @@ describe('LFL / LFU - LIFO', () => {
     expect(c.readBool('Ctl.EM')).toBe(true);
     c.write('Dst', 55);
     pulse(c, 'Unload');
-    expect(c.readNumber('Dst')).toBe(55);
+    expect(c.readNumber('Dst')).toBe(0); // empty LIFO returns 0
     expect(c.readNumber('Ctl.POS')).toBe(0);
   });
 

@@ -122,8 +122,12 @@ export function compileProject(def: ProjectDef): CompileResult {
     if (taskNames.has(t.name.toLowerCase())) err({ message: `Duplicate task '${t.name}'`, task: t.name });
     taskNames.add(t.name.toLowerCase());
     if (t.type === 'CONTINUOUS') continuous++;
+    if (t.watchdogMs !== undefined && (typeof t.watchdogMs !== 'number' || !Number.isFinite(t.watchdogMs) || t.watchdogMs < 1 || t.watchdogMs > 2_000_000))
+      err({ message: `Task '${t.name}': watchdog ${t.watchdogMs} ms is invalid (1 ms to 2000 s)`, task: t.name });
     if (t.type === 'PERIODIC') {
-      if (!(t.periodMs! > 0)) err({ message: `Periodic task '${t.name}' needs a period > 0 ms`, task: t.name });
+      const per = t.periodMs;
+      if (typeof per !== 'number' || !Number.isFinite(per) || per < 0.1 || per > 2_000_000)
+        err({ message: `Periodic task '${t.name}': period ${per} ms is invalid (0.1 ms to 2000 s)`, task: t.name });
       if (t.priority !== undefined && (!Number.isInteger(t.priority) || t.priority < 1 || t.priority > 15))
         err({ message: `Task '${t.name}': priority must be 1..15`, task: t.name });
     }
@@ -135,7 +139,15 @@ export function compileProject(def: ProjectDef): CompileResult {
     }
   }
   if (continuous > 1) err({ message: 'Only one continuous task is allowed' });
-  for (const p of def.programs) if (!scheduled.has(p.name.toLowerCase())) warn({ message: `Program '${p.name}' is not scheduled in any task`, program: p.name });
+  const sp = def.controller.scanPeriodMs ?? 10;
+  if (typeof sp !== 'number' || !Number.isFinite(sp) || sp < 0.1 || sp > 2000) err({ message: `Controller scan period ${sp} ms is invalid (0.1 to 2000 ms)` });
+  const fh = def.faultHandler?.toLowerCase();
+  if (def.faultHandler) {
+    if (!progNames.has(fh!)) err({ message: `Controller Fault Handler program '${def.faultHandler}' does not exist` });
+    else if (scheduled.has(fh!)) err({ message: `Controller Fault Handler program '${def.faultHandler}' must not be scheduled in a task`, program: def.faultHandler });
+  }
+  for (const p of def.programs)
+    if (!scheduled.has(p.name.toLowerCase()) && p.name.toLowerCase() !== fh) warn({ message: `Program '${p.name}' is not scheduled in any task`, program: p.name });
 
   // Routines
   const downloadHooks: (() => void)[] = [];
@@ -168,6 +180,8 @@ export function compileProject(def: ProjectDef): CompileResult {
       }
       routines.set(r.name.toLowerCase(), compiler(r, env));
     }
+    if (p.faultRoutine && !routineNames.has(p.faultRoutine.toLowerCase()))
+      err({ message: `Program '${p.name}': fault routine '${p.faultRoutine}' does not exist`, program: p.name });
     const main = routines.get((p.mainRoutine ?? '').toLowerCase()) ?? null;
     if (!p.mainRoutine || !routineNames.has(p.mainRoutine.toLowerCase())) err({ message: `Program '${p.name}' has no main routine '${p.mainRoutine ?? ''}'`, program: p.name });
     programs.set(p.name.toLowerCase(), { name: p.name, def: p, scope, routines, main, firstScan: true });

@@ -36,8 +36,14 @@ export interface LadderLiveState {
   rungs: Rung[];
   /** Per rung: power-flow out of each element (pre-order element ids) */
   power: Uint8Array[];
-  /** Per rung: 1 if the rung was scanned with a true rung-condition-in */
+  /** Per rung: 1 if the rung was last scanned with a true rung-condition-in */
   rungIn: Uint8Array;
+  /**
+   * Per rung: id of the last task scan that executed the rung (compare with
+   * `Runtime.scanId`). Rungs skipped by JMP/RET or in routines that were not
+   * called keep an older id, so the online view can show them as not scanned.
+   */
+  scanned: Uint32Array;
 }
 
 export interface CompiledRoutine {

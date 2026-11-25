@@ -493,10 +493,11 @@ describe('ABS', () => {
 });
 
 describe('SQR', () => {
-  it('computes integer square roots, rounding the result', () => {
+  it('computes integer square roots, truncating the result (integer source and dest)', () => {
     expect(result('SQR 16 D ;', [dint('D')])).toBe(4);
     expect(result('SQR 2 D ;', [dint('D')])).toBe(1); // 1.414
-    expect(result('SQR 7 D ;', [dint('D')])).toBe(3); // 2.646
+    expect(result('SQR 7 D ;', [dint('D')])).toBe(2); // 2.646 truncated
+    expect(result('SQR 99 D ;', [dint('D')])).toBe(9); // 9.95 truncated
     expect(result('SQR A D ;', [int('A', 10000), sint('D')])).toBe(100);
   });
 
@@ -517,7 +518,7 @@ describe('SQR', () => {
 
   it('flags a narrowing store', () => {
     const c = once('SQR 2147483647 S ;', [sint('S')]);
-    expect(c.readNumber('S')).toBe(((46341 << 24) >> 24));
+    expect(c.readNumber('S')).toBe(((46340 << 24) >> 24)); // sqrt = 46340.95, truncated
     expect(flags(c).V).toBe(1);
   });
 

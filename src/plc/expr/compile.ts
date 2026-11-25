@@ -106,10 +106,11 @@ const FUNCS: Record<string, FuncDef> = {
     args: 1,
     result: () => 'DINT',
     make: (_rt, [a]) => () => {
-      let v = a() | 0;
+      // full 8-digit BCD range: a top digit of 8 or 9 makes the DINT negative, so shift unsigned
+      let v = a() >>> 0;
       let out = 0;
       let mul = 1;
-      while (v > 0) {
+      while (v !== 0) {
         out += (v & 0xf) * mul;
         mul *= 10;
         v >>>= 4;

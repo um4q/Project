@@ -51,7 +51,8 @@ src/plc/
 - **Scan.** Read input image → run the main routine of each program in the task (JSR'd routines run when called) → write output image.
 - **Compile, then run.** Download compiles every rung into closures bound directly to tag storage. Verify and Download share the compiler, so Download is blocked whenever Verify reports an error.
 - **Prescan.** Entering Run prescans every routine once: OTE outputs are cleared, TON timers reset, TOF accumulators set to preset, one-shot storage bits primed, CTU/CTD `.CU`/`.CD` set, FIFO loads and unloads armed. Then the first scan of each program runs with `S:FS` set.
-- **Faults.** Array subscripts out of range (Type 4 Code 20), divide by zero (Type 4 Code 4, major in LogixSim), negative timer preset/accumulator (Type 4 Code 34), JSR/SBR/RET parameter mismatch (Type 4 Code 31) and task watchdog (Type 6 Code 1) stop the controller. The fault record holds the program, routine, rung and instruction. Arithmetic overflow is a minor fault (sets `S:V` and `S:MINOR`).
+- **Faults.** Array subscripts out of range (Type 4 Code 20), divide by zero (Type 4 Code 4, major in LogixSim), negative timer preset/accumulator (Type 4 Code 34), JSR/SBR/RET parameter mismatch (Type 4 Code 31) and task watchdog (Type 6 Code 1) stop the controller. The fault record holds the task, program, routine, rung, element and instruction (also for faults raised during prescan). Arithmetic overflow is a minor fault (sets `S:V` and `S:MINOR`). A program's fault routine (instruction faults) and the Controller Fault Handler program run once when a major fault occurs; without GSV/SSV they cannot clear it yet.
+- **Online view data.** Each ladder routine exposes `power` (power flow out of every element, in the pre-order ids of `walkRung`), `rungIn` and `scanned` (the scan id that last executed each rung, compared with `Runtime.scanId`, so rungs skipped by JMP/RET show as not scanned) through `controller.ladderState(program, routine)`.
 
 ### Using the engine
 
@@ -104,7 +105,19 @@ Both forms parse; `?` marks a missing operand. Whole routines can be pasted: one
 
 Data types: BOOL, SINT, INT, DINT, REAL, TIMER, COUNTER, CONTROL, FBD_TIMER, FBD_COUNTER, MOVING_STD_DEV, arrays up to 3 dimensions, and user-defined types. Operands support members, subscripts (constant, tag or expression), bit access (`Data[0].3`, `MyDint.[Idx]`), aliases (`Local:1:I.Data.8`), controller and program scope, and status flags `S:FS`, `S:N`, `S:Z`, `S:V`, `S:C`, `S:MINOR`. Tag names are case-insensitive.
 
-Numeric rules follow Logix: integer math is 32-bit with wrap-around (overflow sets `S:V`), any REAL operand switches the operation to single precision, REAL→integer conversion rounds half to even, narrowing integer stores keep the low bits, and integer division truncates toward zero.
+Numeric rules follow Logix: integer math is 32-bit with wrap-around (overflow sets `S:V`; integer ADD/SUB also set `S:C`), any REAL operand switches the operation to single precision (integer operands are converted to REAL first), REAL→integer conversion rounds half to even, narrowing integer stores keep the low bits, integer division truncates toward zero, and SQR of an integer into an integer truncates. Logical instructions (AND, OR, XOR, NOT, MVM) zero-fill smaller integer operands; all other instructions sign-extend.
+
+#### Behaviour notes
+
+- Timer and counter Preset/Accum, and file/shift Length/Position, are immediate operands written into the tag (`.PRE`/`.ACC`, `.LEN`/`.POS`) at download; at run time the instruction uses the live members.
+- Prescan: OTE cleared; TON reset; TOF `.ACC = .PRE`; RTO keeps `.ACC`/`.DN`; ONS/OSR storage set; OSF storage cleared; CTU/CTD `.CU`/`.CD` set; FFL/LFL `.EN` and FFU/LFU `.EU` set; BSL/BSR cleared.
+- FFU/LFU on an empty queue return 0 to the destination. `FLL 0 Udt[0] n` clears structure arrays. COP and FLL do not accept BOOL operands (BOOL arrays are bit-packed in Logix).
+- JSR/SBR/RET: atomic parameters convert like MOV; structure and array parameters must match exactly (else Type 4 Code 31). A RET with fewer values than the JSR expects faults; extra values are ignored. JMP labels are local to a routine.
+- LogixSim deviations: divide by zero is a major fault (Logix logs a minor fault); JSR input count vs SBR parameter count is checked at Verify; COP stops at the end of the source array; COP between different structure types is not supported. A JMP into or out of an MCR zone pairs MCRs by execution order. BOOL arrays are not rounded up to multiples of 32.
+
+#### Limits
+
+Scan period and periodic task period 0.1 ms–2000 s, watchdog 1 ms–2000 s, at most 1,000,000 values per tag, branches nested at most 32 deep, JSR nesting 32 levels. `advance(ms)` requires a finite `ms >= 0`. A 200-rung mixed program scans in about 25 µs (median) on the test machine; `npm run bench:scan` prints the figures.
 
 ### I/O modules
 
