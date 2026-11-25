@@ -69,8 +69,11 @@ export function binaryPrecedence(op: BinaryOp): number {
 /** Pretty-print an expression with minimal parentheses. */
 export function formatExpr(e: Expr, parentPrec = 0): string {
   switch (e.kind) {
-    case 'num':
-      return e.isReal && Number.isInteger(e.value) ? e.value.toFixed(1) : String(e.value);
+    case 'num': {
+      const s = e.isReal && Number.isInteger(e.value) ? e.value.toFixed(1) : String(e.value);
+      // a negative literal binds looser than '**': (-2)**2 must not print as -2**2
+      return e.value < 0 && parentPrec > 8 ? `(${s})` : s;
+    }
     case 'bool':
       return e.value ? 'TRUE' : 'FALSE';
     case 'ref':

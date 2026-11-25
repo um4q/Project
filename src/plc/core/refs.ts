@@ -114,7 +114,7 @@ export function atomicSetter(t: AtomicTypeName, holder: () => any, key: () => st
     case 'DINT':
       return (v) => {
         if ((v | 0) === v) {
-          holder()[key()] = v;
+          holder()[key()] = v | 0; // also turns -0 into 0
           return false;
         }
         const r = convert('DINT', v);
@@ -146,7 +146,7 @@ function staticSetter(t: AtomicTypeName, h: any, k: string | number): (v: number
     case 'DINT':
       return (v) => {
         if ((v | 0) === v) {
-          h[k] = v;
+          h[k] = v | 0; // also turns -0 into 0
           return false;
         }
         const r = convert('DINT', v);
@@ -294,9 +294,11 @@ export function compileRef(scope: Scope, path: TagPath, text: string, env: RefCo
         }
       } else {
         const fns: (() => number)[] = [];
-        for (const e of seg.indices) {
+        for (let d = 0; d < seg.indices.length; d++) {
+          const e = seg.indices[d];
           if (e.kind === 'num') {
             if (e.isReal) return { error: `'${text}': array subscript must be an integer` };
+            if (e.value < 0 || e.value >= dims[d]) return { error: `'${text}': array subscript ${e.value} is out of range (0..${dims[d] - 1})` };
             const v = e.value;
             fns.push(() => v);
             continue;

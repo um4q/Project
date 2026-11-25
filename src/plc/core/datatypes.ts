@@ -5,6 +5,8 @@
  * Names are case-insensitive (as in Logix) but case-preserving.
  */
 
+import { validateName } from './names';
+
 export type AtomicTypeName = 'BOOL' | 'SINT' | 'INT' | 'DINT' | 'REAL';
 
 export const ATOMIC_TYPES: readonly AtomicTypeName[] = ['BOOL', 'SINT', 'INT', 'DINT', 'REAL'];
@@ -196,6 +198,11 @@ export class TypeRegistry {
     const errors: string[] = [];
     const pending = new Map<string, UDTDef>();
     for (const def of defs) {
+      const ne = validateName(def.name, 'Data type name');
+      if (ne) {
+        errors.push(ne);
+        continue;
+      }
       const key = def.name.toLowerCase();
       if (this.types.has(key) || pending.has(key)) {
         errors.push(`Data type '${def.name}' is already defined`);
@@ -218,6 +225,11 @@ export class TypeRegistry {
       let ok = true;
       const seen = new Set<string>();
       for (const m of def.members) {
+        const me = validateName(m.name, `Data type '${def.name}': member name`);
+        if (me) {
+          errors.push(me);
+          ok = false;
+        }
         const mk = m.name.toLowerCase();
         if (seen.has(mk)) {
           errors.push(`Data type '${def.name}': duplicate member '${m.name}'`);

@@ -3,6 +3,7 @@
  * from a ProjectDef. Used by both Verify and Download.
  */
 import { Runtime } from '../core/runtime';
+import { PlcMajorFault } from '../core/faults';
 import { TagDatabase, type Scope, type TagProblem } from '../core/tags';
 import { compileRef, isRefError } from '../core/refs';
 import { parseTagPath, ParseError } from '../expr/parser';
@@ -216,7 +217,14 @@ export function compileProject(def: ProjectDef): CompileResult {
   const errors = all.filter((e) => e.severity === 'error');
   const warnings = all.filter((e) => e.severity === 'warning');
   if (errors.length) return { project: null, errors, warnings };
-  for (const h of downloadHooks) h();
+  for (const h of downloadHooks) {
+    // a hook resolving an indirect operand (Tmrs[Idx]) may hit an out-of-range subscript: skip it
+    try {
+      h();
+    } catch (e) {
+      if (!(e instanceof PlcMajorFault)) throw e;
+    }
+  }
   return {
     project: { def, rt, db, tasks, programs, scanPeriodMs: def.controller.scanPeriodMs ?? 10 },
     errors,

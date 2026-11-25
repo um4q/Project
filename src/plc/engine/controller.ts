@@ -123,7 +123,8 @@ export class Controller {
       if (this.mode === 'FAULTED') return 'Clear the major fault before going to Run';
       if (this.mode === 'RUN') return null;
       this.enterRun();
-      return null;
+      const f = this.majorFault as FaultRecord | null;
+      return (this.mode as ControllerMode) === 'FAULTED' && f ? `Major fault during prescan: Type ${f.type} Code ${f.code}: ${f.message}` : null;
     }
     if (this.mode === 'FAULTED') return 'Clear the major fault first';
     this.mode = 'PROGRAM';
@@ -141,10 +142,13 @@ export class Controller {
     // Prescan every program (JSR'd routines are prescanned once via JSR)
     beginPrescanPass();
     rt.prescanning = true;
+    let current: CompiledProgram | undefined;
     try {
       for (const t of cp.tasks) {
         for (const p of t.programs) {
           if (p.def.inhibited || !p.main) continue;
+          current = p;
+          rt.loc.task = t.name;
           rt.loc.program = p.name;
           rt.frames.push({ args: null, returns: null, returned: false });
           p.main.prescan();
@@ -154,7 +158,7 @@ export class Controller {
     } catch (e) {
       rt.prescanning = false;
       this.mode = 'RUN';
-      this.raiseFault(e, undefined);
+      this.raiseFault(e, current);
       return;
     }
     rt.prescanning = false;

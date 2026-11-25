@@ -347,7 +347,7 @@ class InstrCompilerImpl implements InstrCompiler {
     return r;
   }
 
-  struct(i: number, typeName: string): StructRef {
+  struct(i: number, typeName: string, opts: { write?: boolean } = {}): StructRef {
     const t = this.text(i);
     if (t === null) return dummyStruct();
     if (parseLiteral(t)) {
@@ -358,6 +358,10 @@ class InstrCompilerImpl implements InstrCompiler {
     if (!r) return dummyStruct();
     if (r.kind !== 'struct' || r.stype.name.toLowerCase() !== typeName.toLowerCase()) {
       this.error(i, `Invalid data type: '${t}' is ${typeLabel(r)}; ${typeName} required`);
+      return dummyStruct();
+    }
+    if (opts.write && !r.writable) {
+      this.error(i, `'${t}' is read-only`);
       return dummyStruct();
     }
     return r;
@@ -574,7 +578,15 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
         ex = failedExecutable;
       }
       if (c.failed) ex = failedExecutable;
-      if (ex.prescan) prescans.push(ex.prescan.bind(ex));
+      if (ex.prescan) {
+        const pre = ex.prescan.bind(ex);
+        const rungIdx = r;
+        prescans.push(() => {
+          rt.loc.rung = rungIdx;
+          rt.loc.element = id;
+          pre();
+        });
+      }
       const exec = ex.exec;
       const loc = rt.loc;
       return (rin) => {
@@ -639,7 +651,11 @@ export function compileLadderRoutine(rdef: RoutineDef, env: RoutineCompileEnv): 
       let r = 0;
       while (r < n) {
         loc.rung = r;
-        if (--rt.budget < 0) rt.majorFault(FAULT.WATCHDOG, `task exceeded ${rt.watchdogMs} ms`);
+        if (--rt.budget < 0) {
+          // no instruction of this rung has run yet: do not report the previous rung's element
+          loc.element = undefined;
+          rt.majorFault(FAULT.WATCHDOG, `task exceeded ${rt.watchdogMs} ms`);
+        }
         const rin = !rt.mcrFalse;
         rungIn[r] = rin ? 1 : 0;
         execs[r](rin);

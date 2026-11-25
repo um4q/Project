@@ -10,7 +10,7 @@
  *    integers; REAL operands are a verify error.
  */
 import type { Expr, TagPath } from './ast';
-import { DINT_MAX, DINT_MIN } from '../core/values';
+import { DINT_MAX, DINT_MIN, wrapInt } from '../core/values';
 import { FAULT } from '../core/faults';
 import type { Runtime } from '../core/runtime';
 import type { AtomicRef, RefResult } from '../core/refs';
@@ -45,15 +45,25 @@ function classOf(t: string): ExprClass {
 
 /** Integer overflow handling for DINT math. */
 function intResult(rt: Runtime, r: number): number {
-  if (r > DINT_MAX || r < DINT_MIN) {
+  if (r > DINT_MAX || r < DINT_MIN || r !== r) {
     rt.status.V = 1;
     rt.minorFault(FAULT.ARITH_OVERFLOW);
-    return Number(BigInt.asIntN(32, BigInt(Math.trunc(r))));
+    return wrapInt('DINT', r); // +-Infinity / NaN -> 0
   }
   return r;
 }
 
 type Fn = () => number;
+
+/** Single-precision result; an overflow to +-INF (or NaN) sets S:V and logs a minor fault, as Logix does. */
+function realResult(rt: Runtime, v: number): number {
+  const f = Math.fround(v);
+  if (f - f !== 0) {
+    rt.status.V = 1;
+    rt.minorFault(FAULT.ARITH_OVERFLOW);
+  }
+  return f;
+}
 
 interface FuncDef {
   args: number;
@@ -128,8 +138,12 @@ export function knownFunction(name: string): boolean {
   return name.toUpperCase() in FUNCS;
 }
 
+/** Runtime of the expression being compiled (for side-effect free constant folding). */
+let foldRt: Runtime | null = null;
+
 export function compileExpr(e: Expr, env: ExprEnv): CompiledExpr {
   const rt = env.rt;
+  foldRt = rt;
   switch (e.kind) {
     case 'num': {
       const v = e.isReal ? Math.fround(e.value) : e.value;
@@ -169,17 +183,18 @@ export function compileExpr(e: Expr, env: ExprEnv): CompiledExpr {
     case 'binary': {
       const l = compileExpr(e.left, env);
       const r = compileExpr(e.right, env);
-      const fl = l.eval;
-      const fr = r.eval;
       const anyReal = l.cls === 'REAL' || r.cls === 'REAL';
+      // In mixed integer/REAL operations the integer operand is converted to REAL (single precision) first.
+      const fl = anyReal && l.cls === 'DINT' ? ((g) => () => Math.fround(g()))(l.eval) : l.eval;
+      const fr = anyReal && r.cls === 'DINT' ? ((g) => () => Math.fround(g()))(r.eval) : r.eval;
       switch (e.op) {
         case '+':
-          return anyReal ? finish('REAL', () => Math.fround(fl() + fr()), [l, r]) : finish('DINT', () => intResult(rt, fl() + fr()), [l, r]);
+          return anyReal ? finish('REAL', () => realResult(rt, fl() + fr()), [l, r]) : finish('DINT', () => intResult(rt, fl() + fr()), [l, r]);
         case '-':
-          return anyReal ? finish('REAL', () => Math.fround(fl() - fr()), [l, r]) : finish('DINT', () => intResult(rt, fl() - fr()), [l, r]);
+          return anyReal ? finish('REAL', () => realResult(rt, fl() - fr()), [l, r]) : finish('DINT', () => intResult(rt, fl() - fr()), [l, r]);
         case '*':
           return anyReal
-            ? finish('REAL', () => Math.fround(fl() * fr()), [l, r])
+            ? finish('REAL', () => realResult(rt, fl() * fr()), [l, r])
             : finish('DINT', () => {
                 const a = fl();
                 const b = fr();
@@ -196,7 +211,7 @@ export function compileExpr(e: Expr, env: ExprEnv): CompiledExpr {
             ? finish('REAL', () => {
                 const b = fr();
                 if (b === 0) rt.majorFault(FAULT.DIVIDE_BY_ZERO);
-                return Math.fround(fl() / b);
+                return realResult(rt, fl() / b);
               }, [l, r])
             : finish('DINT', () => {
                 const a = fl();
@@ -220,7 +235,7 @@ export function compileExpr(e: Expr, env: ExprEnv): CompiledExpr {
               }, [l, r]);
         case '**':
           return anyReal
-            ? finish('REAL', () => Math.fround(Math.pow(fl(), fr())), [l, r])
+            ? finish('REAL', () => realResult(rt, Math.pow(fl(), fr())), [l, r])
             : finish('DINT', () => intResult(rt, Math.trunc(Math.pow(fl(), fr()))), [l, r]);
         case '=':
         case '<>':
@@ -278,9 +293,22 @@ export function compileExpr(e: Expr, env: ExprEnv): CompiledExpr {
 function finish(cls: ExprClass, f: Fn, parts: CompiledExpr[]): CompiledExpr {
   const refs = parts.flatMap((p) => p.refs);
   if (parts.every((p) => p.constValue !== undefined)) {
-    // constant fold (errors like divide-by-zero still surface at run time)
+    // constant fold (errors like divide-by-zero still surface at run time).
+    // An operation that flags overflow is not folded: undo the compile-time
+    // side effects so S:V / the minor fault happen when it is evaluated.
+    const rt = foldRt;
+    const st = rt?.status;
+    const v0 = st?.V ?? 0;
+    const m0 = st?.MINOR ?? 0;
+    const n0 = rt?.minorFaults.length ?? 0;
     try {
       const v = f();
+      if (rt && st && (st.V !== v0 || rt.minorFaults.length !== n0)) {
+        st.V = v0;
+        st.MINOR = m0;
+        rt.minorFaults.length = n0;
+        return { cls, eval: f, refs };
+      }
       return { cls, eval: () => v, constValue: v, refs };
     } catch {
       return { cls, eval: f, refs };

@@ -111,7 +111,7 @@ export interface InstrCompiler {
   /** Writable numeric destination. `integer` rejects REAL. */
   dest(i: number, opts?: { integer?: boolean; allowBool?: boolean }): AtomicRef;
   /** Structure operand of a given type (TIMER, COUNTER, CONTROL, or any type name). */
-  struct(i: number, typeName: string): StructRef;
+  struct(i: number, typeName: string, opts?: { write?: boolean }): StructRef;
   /** Any tag reference (atomic, struct or array). Returns null on error. */
   ref(i: number, opts?: { write?: boolean }): Ref | null;
   /** Array span (`Arr[3]` starts at element 3; `Arr` starts at 0; a scalar is a span of 1). */

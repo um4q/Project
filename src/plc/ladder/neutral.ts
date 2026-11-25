@@ -203,7 +203,9 @@ const SPACE_SAFE = /^[^\s,;()]+$/;
 
 function instrText(el: LadderInstr, style: NeutralStyle): string {
   const ops = el.operands.map((o) => (isMissingOperand(o) ? '?' : o.trim()));
-  if (style === 'paren' || ops.some((o) => !SPACE_SAFE.test(o) || /^\[/.test(o))) return `${el.mnemonic}(${ops.join(',')})`;
+  // spaced variadic operands end at a word that is a mnemonic (see parseInstr)
+  const ambiguous = !!getInstruction(el.mnemonic)?.variadic && ops.some((o) => /^[A-Za-z_]+$/.test(o) && !!getInstruction(o));
+  if (style === 'paren' || ambiguous || ops.some((o) => !SPACE_SAFE.test(o) || /^\[/.test(o))) return `${el.mnemonic}(${ops.join(',')})`;
   return ops.length ? `${el.mnemonic} ${ops.join(' ')}` : el.mnemonic;
 }
 

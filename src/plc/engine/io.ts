@@ -423,18 +423,17 @@ export class IOSystem {
     if (this.forcesEnabled) for (const f of this.forces) if (f.connection === 'O') f.ref.set(f.value);
     for (const m of this.modules) {
       const out = m.outTag?.holder.value as any;
+      // Outside Run the field gets the program-mode image (off / low end of range) with output forces on top
+      // (forces act regardless of controller mode).
+      const pm = running ? null : this.programModeImage(m);
       if (m.entry.kind === 'DO') {
-        m.field.outputs = running && out ? out.Data & 0xffff : 0;
-        if (!running && this.forcesEnabled) {
-          // forced outputs still drive the field in Program mode (as in Logix)
-          m.field.outputs = this.forcedBits(m.def.slot);
-        }
+        m.field.outputs = pm ? pm.bits : out ? out.Data & 0xffff : 0;
       } else if (m.entry.kind === 'AO') {
         const inV = m.inTag?.holder.value as any;
         for (let c = 0; c < m.entry.size; c++) {
-          const eng = running && out ? out[`Ch${c}Data`] : m.channels[c].lowEng;
+          const eng = pm ? pm.eng[c] : out ? out[`Ch${c}Data`] : m.channels[c].lowEng;
           const s = scaleToSignal(m.channels[c], eng);
-          m.field.analogOut[c] = running ? s.value : ANALOG_RANGES[m.channels[c].range].lo;
+          m.field.analogOut[c] = s.value;
           if (inV) {
             inV[`Ch${c}Underrange`] = running && s.under ? 1 : 0;
             inV[`Ch${c}Overrange`] = running && s.over ? 1 : 0;
@@ -444,14 +443,22 @@ export class IOSystem {
     }
   }
 
-  private forcedBits(slot: number): number {
+  /** Field image of an output module outside Run: all off / low end of range, then output forces in list order. */
+  private programModeImage(m: BoundModule): { bits: number; eng: number[] } {
     let bits = 0;
-    const prefix = `local:${slot}:o.data.`;
-    for (const f of this.forces) {
-      const p = f.path.toLowerCase();
-      if (f.connection === 'O' && p.startsWith(prefix) && f.value) bits |= 1 << Number(p.slice(prefix.length));
+    const eng = m.channels.map((c) => c.lowEng);
+    if (this.forcesEnabled && m.outTag) {
+      for (const f of this.forces) {
+        if (f.connection !== 'O' || f.ref.tag !== m.outTag) continue;
+        const member = f.path.slice(f.path.indexOf('.') + 1); // 'Data', 'Data.4', 'Ch0Data'
+        const bit = /^Data\.(\d+)$/i.exec(member);
+        const ch = /^Ch(\d+)Data$/i.exec(member);
+        if (bit) bits = f.value ? bits | (1 << Number(bit[1])) : bits & ~(1 << Number(bit[1]));
+        else if (/^Data$/i.test(member)) bits = f.value | 0;
+        else if (ch) eng[Number(ch[1])] = f.value;
+      }
     }
-    return bits & 0xffff;
+    return { bits: bits & 0xffff, eng };
   }
 
   /** Called when outputs must drop immediately (fault / program mode). */
